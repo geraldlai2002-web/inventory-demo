@@ -120,7 +120,9 @@ if db_files and audit_files:
             if diff == 0:
                 st.success(f"✅ **Year {year}:** 'In Qty' Grand Total matches perfectly ({official_val:,} units).")
             else:
-                st.warning(f"⚠️ **Year {year}:** MISMATCH! DB Record: {official_val:,} | Uploaded: {uploaded_val:,} ({diff:+:,} units)")
+                # Fixed formatting logic here: split sign determination from comma string layout
+                sign = "+" if diff > 0 else ""
+                st.warning(f"⚠️ **Year {year}:** MISMATCH! DB Record: {official_val:,} | Uploaded: {uploaded_val:,} ({sign}{diff:,} units)")
                 mismatched_years.append(year)
                 
         st.write("───")
@@ -132,4 +134,4 @@ if db_files and audit_files:
             st.error(f"🚨 **System Action [Scenario 2]:** Multiple historical records out of sync: {mismatched_years}.")
             
 elif db_files or audit_files:
-    st.info("☝️ Please make sure you drop your files into **BOTH** upload zones above to start.")
+    st.info("☝️ Please make sure you drop files into **BOTH** upload zones above to start.")
