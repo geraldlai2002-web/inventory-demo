@@ -8,7 +8,7 @@ st.set_page_config(page_title="Inventory Auditor", layout="centered")
 st.title("📊 Historical Inventory Auditor")
 st.markdown("### Sumirubber Stock Movement Auditor")
 
-st.write("Upload your files into both columns. The system dynamically aligns to the stock movement summary report layout.")
+st.write("Upload your files into both columns. The system dynamically reads the exact **Grand Total** value from your reports.")
 
 col1, col2 = st.columns(2)
 
@@ -26,7 +26,7 @@ def process_warehouse_batch(file_list):
     
     for f in file_list:
         try:
-            # 1. Extract the 4-digit year reliably from the file name (e.g., "2025-1-1.xlsx" -> 2025)
+            # 1. Extract the 4-digit year reliably from the file name
             year_match = re.search(r'(20\d{2})', f.name)
             if not year_match:
                 errors.append(f"❌ Could not detect a valid 4-digit year in filename `{f.name}`.")
@@ -36,7 +36,7 @@ def process_warehouse_batch(file_list):
             # 2. Read raw Excel file
             df_raw = pd.read_excel(f, header=None)
             
-            # 3. Find the header row by looking for 'Stk Code' or 'In Qty'
+            # 3. Find the header row to locate columns dynamically
             header_row_idx = None
             for idx in range(min(len(df_raw), 15)):
                 row_items = df_raw.iloc[idx].astype(str).str.strip().str.lower().tolist()
@@ -48,35 +48,37 @@ def process_warehouse_batch(file_list):
                 errors.append(f"❌ `{f.name}`: Could not identify the stock report data columns row.")
                 continue
             
-            # 4. Set the discovered row as the official columns headers
-            df_cleaned = df_raw.iloc[header_row_idx+1:].copy()
-            df_cleaned.columns = df_raw.iloc[header_row_idx].astype(str).str.strip()
+            # Extract header text labels
+            headers = df_raw.iloc[header_row_idx].astype(str).str.strip().str.lower().tolist()
             
-            # 5. Look for the 'In Qty' target column case-insensitively
-            target_col = None
-            for col in df_cleaned.columns:
-                if col.lower() == 'in qty':
-                    target_col = col
+            # Find which column index is 'in qty'
+            in_qty_col_idx = None
+            for idx, h in enumerate(headers):
+                if h == 'in qty':
+                    in_qty_col_idx = idx
                     break
             
-            if target_col is not None:
-                # Filter out rows that are part of the header context or empty summary lines at the bottom
-                # Convert the data numbers safely
-                qty_series = pd.to_numeric(df_cleaned[target_col], errors='coerce').dropna()
+            if in_qty_col_idx is None:
+                errors.append(f"❌ `{f.name}` is missing the exact **'In Qty'** header column.")
+                continue
                 
-                # We divide by 2 because summary sheets often contain a visual 'Grand Total' line at the bottom 
-                # that doubles the column sum total.
-                total_sum = int(qty_series.sum())
-                
-                # Check if the last row contains a grand total string to prevent double counting
-                last_row_strings = df_cleaned.iloc[-1].astype(str).str.lower().values
-                if any('grand total' in x for x in last_row_strings):
-                    # Strip the final grand total element calculation so rows don't double sum
-                    total_sum = total_sum // 2
-                    
-                totals_map[file_year] = total_sum
+            # 4. Find the 'Grand Total:' row explicitly to read its value directly
+            grand_total_val = None
+            for idx in range(len(df_raw)):
+                row_string_first_cell = str(df_raw.iloc[idx, 0]).strip().lower()
+                if 'grand total' in row_string_first_cell:
+                    # Grab the value from the 'In Qty' column index on this exact row
+                    val_str = str(df_raw.iloc[idx, in_qty_col_idx]).strip()
+                    # Clean up commas or formatting strings safely
+                    val_clean = re.sub(r'[^\d.-]', '', val_str)
+                    if val_clean:
+                        grand_total_val = int(float(val_clean))
+                    break
+            
+            if grand_total_val is not None:
+                totals_map[file_year] = grand_total_val
             else:
-                errors.append(f"❌ `{f.name}` is missing the exact **'In Qty'** header row.")
+                errors.append(f"❌ `{f.name}`: Could not find a 'Grand Total:' summary row at the bottom.")
                 
         except Exception as e:
             errors.append(f"❌ Error reading `{f.name}`: {str(e)}")
@@ -103,18 +105,18 @@ if db_files and audit_files:
             diff = uploaded_val - official_val
             
             if diff == 0:
-                st.success(f"✅ **Year {year}:** 'In Qty' matches perfectly ({official_val:,} units).")
+                st.success(f"✅ **Year {year}:** 'In Qty' Grand Total matches perfectly ({official_val:,} units).")
             else:
                 st.warning(f"⚠️ **Year {year}:** MISMATCH! DB Record: {official_val:,} | Uploaded: {uploaded_val:,} ({diff:+:,} units)")
                 mismatched_years.append(year)
                 
         st.write("───")
         if not mismatched_years:
-            st.success("🎉 **Audit Complete:** Records align cleanly across all processed report lines!")
+            st.success("🎉 **Audit Complete:** Every year matches cleanly based on official Grand Totals!")
         elif len(mismatched_years) == 1:
             st.info(f"💡 **System Action [Scenario 1]:** Discrepancy isolated strictly to **Year {mismatched_years[0]}**.")
         else:
             st.error(f"🚨 **System Action [Scenario 2]:** Multiple historical records out of sync: {mismatched_years}.")
             
 elif db_files or audit_files:
-    st.info("☝️ Please make sure you drop files into **BOTH** upload zones above to start.")
+    st.info("☝ Greenwood, make sure you drop your files into **BOTH** upload zones above to start comparing.")
