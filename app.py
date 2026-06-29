@@ -93,4 +93,4 @@ if scenario != "Select a scenario...":
         # --- SCENARIO 2 UI CONTROL ---
         elif len(mismatched_years) > 1:
             st.error(f"🚨 **Mathematical Deadlock:** Mismatches detected across multiple historical branches: {mismatched_years}.")
-            st.
+        
