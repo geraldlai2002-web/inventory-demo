@@ -62,11 +62,13 @@ def process_warehouse_batch(file_list):
                 errors.append(f"❌ `{f.name}` is missing the exact **'In Qty'** header column.")
                 continue
                 
-            # 4. Find the 'Grand Total:' row explicitly to read its value directly
+            # 4. Find the 'Grand Total:' row by scanning all cells in each row
             grand_total_val = None
             for idx in range(len(df_raw)):
-                row_string_first_cell = str(df_raw.iloc[idx, 0]).strip().lower()
-                if 'grand total' in row_string_first_cell:
+                # Convert the entire row's text to a lower-case string to scan it cleanly
+                row_text_joined = " ".join(df_raw.iloc[idx].dropna().astype(str).str.lower().tolist())
+                
+                if 'grand total' in row_text_joined:
                     # Grab the value from the 'In Qty' column index on this exact row
                     val_str = str(df_raw.iloc[idx, in_qty_col_idx]).strip()
                     # Clean up commas or formatting strings safely
@@ -119,4 +121,4 @@ if db_files and audit_files:
             st.error(f"🚨 **System Action [Scenario 2]:** Multiple historical records out of sync: {mismatched_years}.")
             
 elif db_files or audit_files:
-    st.info("☝ Greenwood, make sure you drop your files into **BOTH** upload zones above to start comparing.")
+    st.info("☝️ Please make sure you drop your files into **BOTH** upload zones above to start.")
