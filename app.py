@@ -8,107 +8,109 @@ st.set_page_config(page_title="Inventory Auditor", layout="centered")
 st.title("📊 Historical Inventory Auditor")
 st.markdown("### Sumirubber Stock Movement Auditor")
 
-st.write("Upload your files into both columns. The system dynamically reads the exact **Grand Total** value from your reports.")
+st.write("Drop your **Master 2015_2025 file** on the left, and your **Individual Yearly files** on the right.")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("🗄️ 1. Official Database Data")
-    db_files = st.file_uploader("Upload baseline Excel files:", type=["xlsx"], accept_multiple_files=True, key="db_uploader")
+    st.subheader("🗄️ 1. Master Database File")
+    db_files = st.file_uploader("Upload Master 2015_2025 Excel:", type=["xlsx"], accept_multiple_files=True, key="db_uploader")
 
 with col2:
-    st.subheader("📥 2. New Files to Audit")
-    audit_files = st.file_uploader("Upload verification Excel files:", type=["xlsx"], accept_multiple_files=True, key="audit_uploader")
+    st.subheader("📥 2. Individual Yearly Files")
+    audit_files = st.file_uploader("Upload yearly verification files:", type=["xlsx"], accept_multiple_files=True, key="audit_uploader")
 
-def process_warehouse_batch(file_list):
-    totals_map = {}
+def get_grand_total_from_sheet(df_raw, header_row_idx, in_qty_col_idx):
+    for idx in range(len(df_raw)):
+        row_cells = df_raw.iloc[idx].dropna().astype(str).str.strip().tolist()
+        row_text_joined = " ".join(row_cells).lower()
+        if 'grand total' in row_text_joined:
+            val_str = ""
+            if in_qty_col_idx < len(df_raw.iloc[idx]):
+                val_str = str(df_raw.iloc[idx, in_qty_col_idx]).strip()
+            val_clean = re.sub(r'[^\d.-]', '', val_str)
+            if not val_clean or val_clean == 'nan':
+                for cell in reversed(row_cells):
+                    possible_val = re.sub(r'[^\d.-]', '', cell)
+                    if possible_val and possible_val != '.':
+                        val_clean = possible_val
+                        break
+            if val_clean:
+                return int(float(val_clean))
+    return None
+
+def process_files(db_list, audit_list):
+    db_totals = {}
+    audit_totals = {}
     errors = []
     
-    for f in file_list:
+    # 1. Process Master File(s) on Left
+    for f in db_list:
         try:
-            # 1. Extract the 4-digit year reliably from the file name
+            # If it's a multi-sheet master or single sheet, read it
+            xl = pd.ExcelFile(f)
+            for sheet_name in xl.sheet_names:
+                # Find year from sheet name or filename
+                year_match = re.search(r'(20\d{2})', sheet_name) or re.search(r'(20\d{2})', f.name)
+                if not year_match:
+                    continue
+                year = int(year_match.group(1))
+                
+                df_raw = pd.read_excel(f, sheet_name=sheet_name, header=None)
+                header_row_idx = None
+                for idx in range(min(len(df_raw), 15)):
+                    row_items = df_raw.iloc[idx].astype(str).str.strip().str.lower().tolist()
+                    if 'stk code' in row_items or 'in qty' in row_items:
+                        header_row_idx = idx
+                        break
+                if header_row_idx is not None:
+                    headers = df_raw.iloc[header_row_idx].astype(str).str.strip().str.lower().tolist()
+                    in_qty_idx = headers.index('in qty') if 'in qty' in headers else None
+                    if in_qty_idx is not None:
+                        g_total = get_grand_total_from_sheet(df_raw, header_row_idx, in_qty_idx)
+                        if g_total is not None:
+                            db_totals[year] = g_total
+        except Exception as e:
+            errors.append(f"❌ Error reading master `{f.name}`: {str(e)}")
+
+    # 2. Process Yearly Files on Right
+    for f in audit_list:
+        try:
             year_match = re.search(r'(20\d{2})', f.name)
             if not year_match:
-                errors.append(f"❌ Could not detect a valid 4-digit year in filename `{f.name}`.")
+                errors.append(f"❌ No 4-digit year in filename `{f.name}`.")
                 continue
-            file_year = int(year_match.group(1))
+            year = int(year_match.group(1))
             
-            # 2. Read raw Excel file
             df_raw = pd.read_excel(f, header=None)
-            
-            # 3. Find the header row to locate columns dynamically
             header_row_idx = None
             for idx in range(min(len(df_raw), 15)):
                 row_items = df_raw.iloc[idx].astype(str).str.strip().str.lower().tolist()
                 if 'stk code' in row_items or 'in qty' in row_items:
                     header_row_idx = idx
                     break
-            
-            if header_row_idx is None:
-                errors.append(f"❌ `{f.name}`: Could not identify the stock report data columns row.")
-                continue
-            
-            # Extract header text labels
-            headers = df_raw.iloc[header_row_idx].astype(str).str.strip().str.lower().tolist()
-            
-            # Find which column index is 'in qty'
-            in_qty_col_idx = None
-            for idx, h in enumerate(headers):
-                if h == 'in qty':
-                    in_qty_col_idx = idx
-                    break
-            
-            if in_qty_col_idx is None:
-                errors.append(f"❌ `{f.name}` is missing the exact **'In Qty'** header column.")
-                continue
-                
-            # 4. Find the 'Grand Total:' row by scanning all cells in each row
-            grand_total_val = None
-            for idx in range(len(df_raw)):
-                row_cells = df_raw.iloc[idx].dropna().astype(str).str.strip().tolist()
-                row_text_joined = " ".join(row_cells).lower()
-                
-                if 'grand total' in row_text_joined:
-                    val_str = ""
-                    # Safety check: see if the 'In Qty' column position exists on this specific row array
-                    if in_qty_col_idx < len(df_raw.iloc[idx]):
-                        val_str = str(df_raw.iloc[idx, in_qty_col_idx]).strip()
-                    
-                    # Fallback: If out of bounds or empty, extract the numbers from the row cells directly
-                    val_clean = re.sub(r'[^\d.-]', '', val_str)
-                    if not val_clean or val_clean == 'nan':
-                        # Scan backwards through the row to find the first valid numeric string
-                        for cell in reversed(row_cells):
-                            possible_val = re.sub(r'[^\d.-]', '', cell)
-                            if possible_val and possible_val != '.':
-                                val_clean = possible_val
-                                break
-                                
-                    if val_clean:
-                        grand_total_val = int(float(val_clean))
-                    break
-            
-            if grand_total_val is not None:
-                totals_map[file_year] = grand_total_val
-            else:
-                errors.append(f"❌ `{f.name}`: Could not find a 'Grand Total:' summary row at the bottom.")
-                
+            if header_row_idx is not None:
+                headers = df_raw.iloc[header_row_idx].astype(str).str.strip().str.lower().tolist()
+                in_qty_idx = headers.index('in qty') if 'in qty' in headers else None
+                if in_qty_idx is not None:
+                    g_total = get_grand_total_from_sheet(df_raw, header_row_idx, in_qty_idx)
+                    if g_total is not None:
+                        audit_totals[year] = g_total
         except Exception as e:
-            errors.append(f"❌ Error reading `{f.name}`: {str(e)}")
+            errors.append(f"❌ Error reading yearly file `{f.name}`: {str(e)}")
             
-    return totals_map, errors
+    return db_totals, audit_totals, errors
 
 if db_files and audit_files:
     st.markdown("---")
     st.subheader("🔍 Auditor Analysis Run")
     
-    db_totals, db_errors = process_warehouse_batch(db_files)
-    audit_totals, audit_errors = process_warehouse_batch(audit_files)
+    db_totals, audit_totals, errors = process_files(db_files, audit_files)
     
-    for err in (db_errors + audit_errors):
+    for err in errors:
         st.error(err)
         
-    if not db_errors and not audit_errors:
+    if not errors:
         all_years = sorted(list(set(db_totals.keys()) | set(audit_totals.keys())))
         mismatched_years = []
         
@@ -117,21 +119,18 @@ if db_files and audit_files:
             uploaded_val = audit_totals.get(year, 0)
             diff = uploaded_val - official_val
             
-            if diff == 0:
+            if diff == 0 and official_val > 0:
                 st.success(f"✅ **Year {year}:** 'In Qty' Grand Total matches perfectly ({official_val:,} units).")
+            elif official_val == 0 or uploaded_val == 0:
+                st.info(f"ℹ️ **Year {year}:** Waiting for matching file on both sides.")
             else:
-                # Fixed formatting logic here: split sign determination from comma string layout
                 sign = "+" if diff > 0 else ""
-                st.warning(f"⚠️ **Year {year}:** MISMATCH! DB Record: {official_val:,} | Uploaded: {uploaded_val:,} ({sign}{diff:,} units)")
+                st.warning(f"⚠️ **Year {year}:** MISMATCH! Master: {official_val:,} | Yearly: {uploaded_val:,} ({sign}{diff:,} units)")
                 mismatched_years.append(year)
                 
         st.write("───")
-        if not mismatched_years:
-            st.success("🎉 **Audit Complete:** Every year matches cleanly based on official Grand Totals!")
-        elif len(mismatched_years) == 1:
-            st.info(f"💡 **System Action [Scenario 1]:** Discrepancy isolated strictly to **Year {mismatched_years[0]}**.")
-        else:
-            st.error(f"🚨 **System Action [Scenario 2]:** Multiple historical records out of sync: {mismatched_years}.")
+        if all_years and not mismatched_years:
+            st.success("🎉 **Audit Complete:** Everything aligns cleanly!")
             
 elif db_files or audit_files:
-    st.info("☝️ Please make sure you drop files into **BOTH** upload zones above to start.")
+    st.info("☝️ Drop your Master file on the left AND your yearly files on the right to trigger the scan.")
