@@ -65,14 +65,25 @@ def process_warehouse_batch(file_list):
             # 4. Find the 'Grand Total:' row by scanning all cells in each row
             grand_total_val = None
             for idx in range(len(df_raw)):
-                # Convert the entire row's text to a lower-case string to scan it cleanly
-                row_text_joined = " ".join(df_raw.iloc[idx].dropna().astype(str).str.lower().tolist())
+                row_cells = df_raw.iloc[idx].dropna().astype(str).str.strip().tolist()
+                row_text_joined = " ".join(row_cells).lower()
                 
                 if 'grand total' in row_text_joined:
-                    # Grab the value from the 'In Qty' column index on this exact row
-                    val_str = str(df_raw.iloc[idx, in_qty_col_idx]).strip()
-                    # Clean up commas or formatting strings safely
+                    val_str = ""
+                    # Safety check: see if the 'In Qty' column position exists on this specific row array
+                    if in_qty_col_idx < len(df_raw.iloc[idx]):
+                        val_str = str(df_raw.iloc[idx, in_qty_col_idx]).strip()
+                    
+                    # Fallback: If out of bounds or empty, extract the numbers from the row cells directly
                     val_clean = re.sub(r'[^\d.-]', '', val_str)
+                    if not val_clean or val_clean == 'nan':
+                        # Scan backwards through the row to find the first valid numeric string
+                        for cell in reversed(row_cells):
+                            possible_val = re.sub(r'[^\d.-]', '', cell)
+                            if possible_val and possible_val != '.':
+                                val_clean = possible_val
+                                break
+                                
                     if val_clean:
                         grand_total_val = int(float(val_clean))
                     break
