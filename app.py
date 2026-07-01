@@ -1,45 +1,44 @@
 import streamlit as st
 import pandas as pd
-import re
 
-st.set_page_config(page_title="Quick Inventory Comparator", layout="wide")
-st.title("⚖️ Quick Inventory Comparator")
+st.set_page_config(page_title="Inventory Delta Tracker", layout="wide")
+st.title("⚖️ Inventory Delta Tracker")
 
 col1, col2 = st.columns(2)
-with col1:
-    file_old = st.file_uploader("Upload Baseline File", type=["xlsx", "csv"])
-with col2:
-    file_new = st.file_uploader("Upload New File", type=["xlsx", "csv"])
+file_old = col1.file_uploader("Upload Baseline (2025_mini)", type=["csv", "xlsx"])
+file_new = col2.file_uploader("Upload New Master", type=["csv", "xlsx"])
 
-def load_and_parse(file_obj):
+def process_file(file_obj):
+    # 1. Read file, find the row with 'Stk Code' as the header
     df = pd.read_csv(file_obj) if file_obj.name.endswith('.csv') else pd.read_excel(file_obj)
-    # Set the first column as index, but ensure it's treated as strings
-    df.iloc[:, 0] = df.iloc[:, 0].astype(str)
-    return df.set_index(df.columns[0])
+    
+    # Locate where the actual data starts (where 'Stk Code' exists)
+    # The snippet shows headers are on row 6 (index 5)
+    header_idx = df[df.iloc[:, 0] == 'Stk Code'].index[0]
+    df = pd.read_csv(file_obj, skiprows=header_idx) if file_obj.name.endswith('.csv') \
+         else pd.read_excel(file_obj, skiprows=header_idx)
+    
+    # 2. Filter: Only keep valid Stock IDs (exclude 'Grand Total' and empty)
+    df = df[df['Stk Code'].notna() & (df['Stk Code'] != 'Grand Total:')]
+    
+    # 3. Select only numeric metrics for comparison
+    metrics = ['Prev. Qty', 'In Qty', 'Transfer', 'Transform', 'Issue Qty', 'Del. Qty', 'Bal Qty']
+    for m in metrics:
+        df[m] = pd.to_numeric(df[m], errors='coerce').fillna(0)
+        
+    return df.set_index('Stk Code')[metrics]
 
 if file_old and file_new:
-    df_old = load_and_parse(file_old)
-    df_new = load_and_parse(file_new)
+    df1 = process_file(file_old)
+    df2 = process_file(file_new)
     
-    # 1. Filter both DataFrames to keep ONLY numeric columns
-    df_old_num = df_old.select_dtypes(include=['number'])
-    df_new_num = df_new.select_dtypes(include=['number'])
+    # Compare
+    diff = df2 - df1
+    # Identify items where any metric changed
+    changed = diff[(diff != 0).any(axis=1)]
     
-    # 2. Align by common IDs
-    common_ids = df_old_num.index.intersection(df_new_num.index)
-    df_old_num = df_old_num.loc[common_ids]
-    df_new_num = df_new_num.loc[common_ids]
-    
-    # 3. Now the subtraction will work safely
-    diff = df_new_num - df_old_num
-    
-    # Filter only cells with significant variance
-    mask = diff.abs() > 0.01
-    changed_items = diff[mask].stack().reset_index()
-    changed_items.columns = ['Stock ID', 'Metric', 'Variance']
-    
-    if not changed_items.empty:
-        st.error(f"Found {len(changed_items)} discrepancies:")
-        st.dataframe(changed_items, use_container_width=True)
+    if not changed.empty:
+        st.error(f"Found {len(changed)} modified items:")
+        st.dataframe(changed, use_container_width=True)
     else:
-        st.success("Files match perfectly.")
+        st.success("Files are identical!")
