@@ -34,13 +34,45 @@ def parse_data(file_obj):
 st.markdown("---")
 st.subheader("⚡ Discrepancy Execution Log")
 
-# Logic: Compare file at index N in Left to file at index N in Right
+# 3. Execution Logic
 if st.button("Run Comparison"):
+    st.markdown("---")
+    # Loop through the pairs
     for i in range(min(len(st.session_state.baseline_files), len(st.session_state.compare_files))):
-        base = st.session_state.baseline_files[i]
-        comp = st.session_state.compare_files[i]
+        base_file = st.session_state.baseline_files[i]
+        comp_file = st.session_state.compare_files[i]
         
-        if base and comp:
-            st.write(f"### Comparing Baseline {i+1} vs Comparison {i+1}")
-            # Insert your existing comparison logic here
-            # This ensures Row 1 is compared to Row 1, Row 2 to Row 2, etc.
+        if base_file and comp_file:
+            st.subheader(f"📊 Results: Baseline {i+1} vs Comparison {i+1}")
+            
+            # Parse files
+            base_data = parse_stock_sheet(base_file)
+            comp_data = parse_stock_sheet(comp_file)
+            
+            # Logic to find differences
+            differences = []
+            all_keys = set(base_data.keys()) | set(comp_data.keys())
+            
+            for stk_id in sorted(all_keys):
+                old = base_data.get(stk_id, {})
+                new = comp_data.get(stk_id, {})
+                
+                # Check metrics (assuming same columns in both)
+                for metric in set(old.keys()) | set(new.keys()):
+                    val_old = old.get(metric, 0.0)
+                    val_new = new.get(metric, 0.0)
+                    
+                    if abs(val_new - val_old) > 0.01:
+                        differences.append({
+                            "Stock ID": stk_id,
+                            "Metric": metric,
+                            "Baseline": f"{val_old:,.2f}",
+                            "New": f"{val_new:,.2f}",
+                            "Delta": f"{val_new - val_old:+,.2f}"
+                        })
+            
+            # Display result for this specific pair
+            if differences:
+                st.dataframe(pd.DataFrame(differences), use_container_width=True)
+            else:
+                st.success(f"✅ Baseline {i+1} and Comparison {i+1} are identical.")
