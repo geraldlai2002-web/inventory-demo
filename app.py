@@ -6,9 +6,14 @@ st.set_page_config(page_title="Vertical Inventory Tracker", layout="wide")
 
 st.title("🕵️‍♂️ Vertical Inventory Delta Tracker")
 
-# Initialize session state for file slots
+# Initialize session state for both lists
 if 'baseline_files' not in st.session_state: st.session_state.baseline_files = [None]
 if 'compare_files' not in st.session_state: st.session_state.compare_files = [None]
+
+# Single function to add rows to both lists
+def add_new_pair():
+    st.session_state.baseline_files.append(None)
+    st.session_state.compare_files.append(None)
 
 def parse_stock_sheet(file_obj):
     """Parses a file and extracts all metrics for every Stock ID row."""
@@ -21,7 +26,7 @@ def parse_stock_sheet(file_obj):
     data_matrix = {}
     header_idx = None
     
-    # Locate header row (looking for key identifiers)
+    # Locate header row
     for idx in range(min(len(df), 20)):
         row_str = df.iloc[idx].astype(str).str.strip().str.lower().tolist()
         if 'stk code' in row_str or 'in qty' in row_str:
@@ -50,19 +55,19 @@ def parse_stock_sheet(file_obj):
     return data_matrix
 
 # UI Layout
+st.button("➕ Add Comparison Pair", on_click=add_new_pair)
+
 left_col, right_col = st.columns(2)
 
 with left_col:
     st.subheader("⬅️ Baseline Source")
-    if st.button("Add Baseline Row"): st.session_state.baseline_files.append(None)
     for i in range(len(st.session_state.baseline_files)):
-        st.session_state.baseline_files[i] = st.file_uploader(f"Baseline {i+1}", key=f"base_{i}")
+        st.session_state.baseline_files[i] = st.file_uploader(f"Baseline File {i+1}", key=f"base_{i}")
 
 with right_col:
     st.subheader("➡️ Comparison Files")
-    if st.button("Add Comparison Row"): st.session_state.compare_files.append(None)
     for i in range(len(st.session_state.compare_files)):
-        st.session_state.compare_files[i] = st.file_uploader(f"Comparison {i+1}", key=f"comp_{i}")
+        st.session_state.compare_files[i] = st.file_uploader(f"Comparison File {i+1}", key=f"comp_{i}")
 
 st.markdown("---")
 st.subheader("⚡ Discrepancy Execution Log")
