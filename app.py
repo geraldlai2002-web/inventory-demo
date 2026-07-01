@@ -2,108 +2,73 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.set_page_config(page_title="Inventory Delta Tracker", layout="wide")
+st.set_page_config(page_title="Dynamic Inventory Tracker", layout="wide")
 
-st.title("🕵️‍♂️ Inventory Audit & Delta Tracker")
-st.markdown("### Detect exact Stock ID and Metric modifications between two files")
+st.title("🕵️‍♂️ Multi-Row Inventory Tracker")
 
-col1, col2 = st.columns(2)
+# 1. Dynamic File Input Management
+if 'file_count' not in st.session_state:
+    st.session_state.file_count = 2  # Start with 2 slots
 
-with col1:
-    st.subheader("🗄️ 1. Baseline File")
-    baseline_file = st.file_uploader("Upload the original file:", type=["xlsx", "csv"], key="baseline")
+def add_file_row():
+    st.session_state.file_count += 1
 
-with col2:
-    st.subheader("📥 2. New File")
-    new_file = st.file_uploader("Upload the new file to compare:", type=["xlsx", "csv"], key="new_master")
+st.button("➕ Add Another File Row", on_click=add_file_row)
+
+file_uploaders = []
+for i in range(st.session_state.file_count):
+    file_uploaders.append(st.file_uploader(f"File {i+1} (Row {i+1})", type=["xlsx", "csv"], key=f"file_{i}"))
 
 def parse_stock_sheet(file_obj):
-    """Parses a file and extracts all metrics for every Stock ID row."""
+    """Parses file and returns a dictionary of metrics."""
+    if not file_obj: return {}
     try:
-        if file_obj.name.endswith('.csv'):
-            df = pd.read_csv(file_obj, header=None)
-        else:
-            df = pd.read_excel(file_obj, header=None)
-    except Exception:
+        df = pd.read_csv(file_obj) if file_obj.name.endswith('.csv') else pd.read_excel(file_obj)
+        # Assuming simple structure for comparison
+        # You can adjust header search logic here if needed
+        data_matrix = {}
+        for _, row in df.iterrows():
+            stk_code = str(row.iloc[0]).strip()
+            if stk_code and stk_code.lower() != 'nan':
+                # Map columns (assuming index 1 onwards are numeric metrics)
+                metrics = {str(col): float(val) if isinstance(val, (int, float)) else 0.0 
+                           for col, val in row.iloc[1:].items()}
+                data_matrix[stk_code] = metrics
+        return data_matrix
+    except:
         return {}
 
-    data_matrix = {}
-    header_idx = None
-    
-    # Find the main data table headers
-    for idx in range(min(len(df), 20)):
-        row_str = df.iloc[idx].astype(str).str.strip().str.lower().tolist()
-        if 'stk code' in row_str or 'in qty' in row_str:
-            header_idx = idx
-            break
-            
-    if header_idx is None:
-        return {}
-        
-    headers = df.iloc[header_idx].astype(str).str.strip().tolist()
-    
-    # Target standard report columns
-    target_cols = ['Prev. Qty', 'In Qty', 'Transfer', 'Transform', 'Issue Qty', 'Del. Qty', 'Bal Qty']
-    col_mapping = {}
-    for c in target_cols:
-        if c in headers:
-            col_mapping[c] = headers.index(c)
-            
-    # Parse rows starting after the header row
-    for idx in range(header_idx + 1, len(df)):
-        row = df.iloc[idx]
-        stk_code = str(row.iloc[0]).strip()
-        
-        if not stk_code or stk_code.lower() in ['nan', 'grand total:', 'grand total'] or len(stk_code) < 3:
-            continue
-            
-        item_metrics = {}
-        for col_name, col_idx in col_mapping.items():
-            try:
-                val_raw = str(row.iloc[col_idx]).strip()
-                val_clean = re.sub(r'[^\d.-]', '', val_raw)
-                item_metrics[col_name] = float(val_clean) if val_clean else 0.0
-            except:
-                item_metrics[col_name] = 0.0
-                
-        data_matrix[stk_code] = item_metrics
-        
-    return data_matrix
+# 2. Comparison Logic
+uploaded_files = [f for f in file_uploaders if f is not None]
 
-if baseline_file and new_file:
+if len(uploaded_files) >= 2:
     st.markdown("---")
-    st.subheader("⚡ Discrepancy Execution Log")
+    st.subheader("⚡ Discrepancy Analysis")
     
-    # 1. Parse both files
-    baseline_data = parse_stock_sheet(baseline_file)
-    new_data = parse_stock_sheet(new_file)
+    # Parse all files
+    all_parsed = [parse_stock_sheet(f) for f in uploaded_files]
+    baseline = all_parsed[0]
     
-    # 2. Track down differences
-    changes_found = []
-    all_stock_ids = set(baseline_data.keys()) | set(new_data.keys())
+    comparison_results = []
     
-    for stk_id in sorted(all_stock_ids):
-        old_metrics = baseline_data.get(stk_id, {})
-        new_metrics = new_data.get(stk_id, {})
-        
-        all_columns = set(old_metrics.keys()) | set(new_metrics.keys())
-        for col in all_columns:
-            old_val = old_metrics.get(col, 0.0)
-            new_val = new_metrics.get(col, 0.0)
+    # Compare each subsequent file against the baseline
+    for idx, current_data in enumerate(all_parsed[1:], start=2):
+        for stk_id, metrics in current_data.items():
+            baseline_metrics = baseline.get(stk_id, {})
             
-            if abs(old_val - new_val) > 0.01:
-                variance = new_val - old_val
-                
-                changes_found.append({
-                    "Stock ID": stk_id,
-                    "Column Metric": col,
-                    "Baseline Value": f"{old_val:,.2f}",
-                    "New File Value": f"{new_val:,.2f}",
-                    "Delta Variance": f"{variance:+,.2f}"
-                })
+            for col, val in metrics.items():
+                base_val = baseline_metrics.get(col, 0.0)
+                if abs(val - base_val) > 0.01:
+                    comparison_results.append({
+                        "Stock ID": stk_id,
+                        "Metric": col,
+                        "Baseline (File 1)": base_val,
+                        f"Value (File {idx})": val,
+                        "Delta": val - base_val
+                    })
 
-    if changes_found:
-        st.error("⚠️ Modified items detected between the two files:")
-        st.dataframe(pd.DataFrame(changes_found), use_container_width=True)
+    if comparison_results:
+        st.error("⚠️ Differences detected against Baseline (File 1):")
+        st.dataframe(pd.DataFrame(comparison_results), use_container_width=True)
     else:
-        st.success("🎉 **Clean Pass:** Both files match perfectly.")
+        st.success("🎉 All files match the baseline perfectly.")
